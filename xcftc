@@ -1,0 +1,229 @@
+#!/usr/bin/sh
+
+#*********************************************************************************************************
+#*   __     __               __     ______                __   __                      _______ _______   *
+#*  |  |--.|  |.---.-..----.|  |--.|   __ \.---.-..-----.|  |_|  |--..-----..----.    |       |     __|  *
+#*  |  _  ||  ||  _  ||  __||    < |    __/|  _  ||     ||   _|     ||  -__||   _|    |   -   |__     |  *
+#*  |_____||__||___._||____||__|__||___|   |___._||__|__||____|__|__||_____||__|      |_______|_______|  *
+#* http://www.blackpantheros.eu | http://www.blackpanther.hu - kbarcza[]blackpanther.hu * Charles Barcza *
+#*************************************************************************************(c)2002-2021********
+
+# DEBUG ON/OFF for verbose
+DEBUG=OFF
+# Disable echos ON/OFF
+SILENT=ON
+# Useful when Silent is ON/OFF
+PROGRESS=ON
+# Thumbnails extension, png working now
+THUMB_EXT=png
+# Generate URI via Python3, recommend
+PYTHON_URI=auto
+# Depth of folder levels from current position
+FOLDER_DEEPS=3
+# Coversion via Gimp, slow.
+GIMP_ENGINE=OFF
+# For debug
+EXAMPLE_HASH="b0ad00612dafd538bf3139566ee5c3e0"
+# PATH OF XCF locations root
+XCF_PATH=$1
+[ ! -n "$XCF_PATH" ]&&XCF_PATH=$(pwd)
+# Temporary files requires for run
+FILE_LIST_CACHE=/tmp/filename_cache.txt
+EXIF_CONF=/tmp/$(basename $0).conf
+
+
+if [ "$DEBUG" != OFF ];then
+    rm -f $FILE_LIST_CACHE
+    find $XCF_PATH -maxdepth $FOLDER_DEEPS -name "*.xcf" >> $FILE_LIST_CACHE
+fi
+
+if [ ! -x "$(which convert)" ];then
+    echo "ImageMagic not installed or 'convert' does not available. Please install first!"
+    echo
+    exit 1
+fi
+if [ ! -x "$(which exiftool)" ];then
+    echo "Perl-Image-ExifTool or any package which provides 'exiftool' has not installed. Please install first!"
+    echo
+    exit 1
+fi
+
+PYMODULE=`python3 -c 'import urllib.parse;' 2>/dev/null && echo OK`
+
+if [ "${PYMODULE}" != "OK" ];then
+    echo "Requires Python3 Urllib module. Please install first!"
+    echo
+    exit 1
+fi
+
+if [ "$UID" = 0 ];then
+    echo "Do NOT run as administrator!"
+    echo
+    exit 1
+fi
+
+if [ ! -f $EXIF_CONF ];then
+cat > $EXIF_CONF <<EOF
+%Image::ExifTool::UserDefined = (
+    'Image::ExifTool::PNG::TextualData' => {
+        'Thumb::URI' => { Name => 'ThumbURI' },
+        'Thumb::Mimetype' => { Name => 'ThumbMimetype' },
+    },
+);
+1; #end
+EOF
+fi
+
+urlencode() {
+    # urlencode <string>
+    local length="${#1}"
+    for (( i = 0; i < length; i++ )); do
+        local c="${1:i:1}"
+        case $c in
+            [a-zA-Z0-9.~_-]) printf "$c" ;;
+            *) printf '%s' "$c" | xxd -p -c1 |
+                   while read c; do printf '%%%s' "$c"; done ;;
+        esac
+    done
+}
+
+urldecode() {
+    # urldecode <string>
+    local url_encoded="${1//+/ }"
+    printf '%b' "${url_encoded//%/\\x}"
+}
+
+makethumb() {
+filepath=$1
+filename=$2
+thumbfilename=$3
+size=$4
+if [ "$SILENT" != ON ];then 
+echo 
+echo "Size: $size - PATH: $filepath - Name: $filename - Thumb: $thumbfilename"
+fi
+[ "$DEBUG" != "OFF" ] && sleep 1
+
+if [ "$GIMP_CONVERT" = Off ];then
+    convert "$1" -auto-orient -flatten -thumbnail ${size}x${size} $thumbfilename
+else
+
+[ "$SILENT" != ON ]&&echo "Convert with GIMP!"
+
+#gimp-console -i -b "(let* ((image (car (gimp-file-load RUN-NONINTERACTIVE \"test.xcf\" \"test.xcf\"))) 
+#(drawable (car (gimp-image-merge-visible-layers image EXPAND-AS-NECESSARY)))) 
+#(file-png-save-defaults RUN-NONINTERACTIVE image drawable \"p.png\" \"p.png\") 
+#(gimp-image-delete image) 
+#(gimp-quit 0))
+
+#(drawable   (car (gimp-image-active-drawable image)))
+gimp -i -b "(let* ((image (car (gimp-file-load RUN-NONINTERACTIVE \"$filepath\" \"$filepath\")))
+(drawable (car (gimp-image-merge-visible-layers image EXPAND-AS-NECESSARY))) 
+(cur-width  (car (gimp-image-width image)))
+(cur-height (car (gimp-image-height image)))
+(ratio      (min (/ $size cur-width) (/ $size cur-height)))
+(width      (* ratio cur-width))
+(height     (* ratio cur-height))
+)
+
+(gimp-image-scale image width height)
+(file-png-save RUN-NONINTERACTIVE image drawable \"$thumbfilename\" \"$thumbfilename\" 0 9 1 1 1 1 1)
+(gimp-image-delete image)
+)" -b "(gimp-quit 0)"
+fi
+
+}
+
+while read line ; do
+    filename=$line
+    if [ -n "$filename" ];then
+    for size in 128 360; do
+	if [ "$SILENT" != ON ];then 
+	echo 
+	echo "===== > $filename"
+	echo 
+	fi
+
+        fileshort="$(basename "$filename")"
+        enc_path=$(urlencode "$filename")
+        dec_path=$(urldecode "$filename")
+        pyuri=`python3 -c 'import sys, urllib.parse ; filename=sys.argv[1] ; print(("file://"+urllib.parse.quote(filename)))' "$(echo -n $filename)"`
+        pyhash=`python3 -c 'import sys, hashlib, urllib.parse ; filename=sys.argv[1] ; print(hashlib.md5(("file://"+urllib.parse.quote(filename)).encode("utf-8")).hexdigest())' "$(echo -n $filename)"`
+        uri="$(echo -n file:///$filename)"
+        euri="$(echo -n file:///$enc_path)"
+        duri="$(echo -n file:///$dec_path)"
+        rhash="$(echo -n "$uri" | md5sum | awk '{print $1}')"
+        thumbfilename=$(echo -n "$uri" | md5sum | awk '{print $1}')
+        [ "$PYTHON_URI" == "true" ] && thumbfilename=$pyhash
+        if [ "$DEBUG" != "OFF" ];then
+        echo "Short : $fileshort"
+        echo "Path  : $filename"
+        echo "URI   : $uri"
+        echo "DURI  : $duri"
+        echo "EURI  : $euri"
+        echo "PYURI : $pyuri"
+        echo "RHash : $(echo -n "$uri" | md5sum | awk '{print $1}')"
+        echo "ENCODE: $(echo -n "$enc_path" | md5sum | awk '{print $1}')"
+        echo "DECODE: $(echo -n "$dec_path" | md5sum | awk '{print $1}')"
+        echo "PYURI : $(echo -n "$pyhash")"
+        echo "EXPECT: $EXAMPLE_HASH"
+        [ "$rhash" != "$pyhash" ]&&echo "MATCH : No! (RAW vs PYURI is different!)"
+        [ "$rhash" == "$pyhash" ]&&echo "MATCH : Yes"
+        sleep 1
+	fi
+	
+     if [ "$THUMB_EXT" = "png" ];then
+        ext=png
+      else
+        ext=jpg
+     fi
+     [ "$rhash" != "$pyhash" ]&&[ "$PYTHON_URI" = "auto" ]&& PYTHON_URI=ON
+
+     [ "$PYTHON_URI" = "ON" ]&&thumbfilename=$pyhash
+     
+     if [ "$size" = "128" ];then
+        [ ! -d "~/.cache/thumbnails/normal" ] && mkdir -p ~/.cache/thumbnails/normal/
+    	    thumb_file=~/.cache/thumbnails/normal/$thumbfilename.$ext
+      else
+        [ ! -d "~/.cache/thumbnails/large" ] && mkdir -p ~/.cache/thumbnails/large/
+    	    thumb_file=~/.cache/thumbnails/large/$thumbfilename.$ext
+      fi
+
+      test -e "$thumb_file" ||  {
+        
+        if [ "$SILENT" != ON ];then 
+        echo -n "Generating [Py:$PYTHON_URI] $(echo $filename |sed "s|^/.*/|/../|") => Size:$size => ($(echo $thumb_file |sed "s|^/.*/|/../|")) "
+        echo
+        fi
+    
+    [ "$DEBUG" != OFF ]&& sleep 1
+    
+    if [ "$GIMP_ENGINE" != OFF ];then
+        makethumb "$filename" "$fileshort" "$thumb_file" "$size"
+    else
+	convert "$filename" -auto-orient -flatten -thumbnail ${size}x${size} $thumb_file
+    fi
+	exiftool -config $EXIF_CONF -overwrite_original \
+	-ThumbURI=$pyuri \
+	-ThumbMimetype='image/x-xcf' \
+	-Software='blackPanther OS XCF thumb-genarator' \
+	$thumb_file >/dev/null
+
+	filename="$filename"
+
+        [ "$SILENT" != ON ]&&echo
+      }
+        if [ "$SILENT" = ON ]&&[ "$PROGRESS" != OFF ]&&[ "$DEBUG" = OFF ];then
+            echo -n .
+        fi
+    done
+    else
+	echo "The $filename filename missing!"
+	sleep 3
+    fi
+done < $FILE_LIST_CACHE
+
+if [ "$DEBUG" != OFF ];then
+    rm -f $FILE_LIST_CACHE
+fi
+echo

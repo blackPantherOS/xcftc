@@ -10,3 +10,7 @@ example:
 `xcftc /home/yourname`
 
 You can modify some value into script, use your favorite text editor for edit
+
+Requires:
+
+`bash, python3-urllib, convert (imagemagick), exiftool (perl-Image-ExifTool)`
