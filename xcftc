@@ -32,8 +32,11 @@ FILE_LIST_CACHE=/tmp/filename_cache.txt
 EXIF_CONF=/tmp/$(basename $0).conf
 
 
-if [ "$DEBUG" != OFF ];then
+if [ "$DEBUG" = OFF ];then
     rm -f $FILE_LIST_CACHE
+    find $XCF_PATH -maxdepth $FOLDER_DEEPS -name "*.xcf" >> $FILE_LIST_CACHE
+elif [ ! -f "$FILE_LIST_CACHE" ] ;then
+    echo "Initial run requires..."
     find $XCF_PATH -maxdepth $FOLDER_DEEPS -name "*.xcf" >> $FILE_LIST_CACHE
 fi
 
